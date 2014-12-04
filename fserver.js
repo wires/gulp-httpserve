@@ -12,6 +12,30 @@ var through = require('through2').obj;
 // maybe can nicely integrate with gulp.dest and serve from fs
 // app.use(mach.file, {root: path.join(__dirname, 'public'), index: ['index.html']})
 
+// render the tree to a JSON datastructure
+function indexJSON(state, options) {
+	function rec(node){
+		// skip directories
+		if(!node.leaf)
+			return {
+				label: node.label + '/',
+				nodes: node.nodes.map(rec)
+			};
+
+		return {
+			label: node.label,
+			nodes: node.nodes.map(rec),
+			path: node.path('/'),
+			meta: node.leaf.frontMatter || {}
+		};
+	};
+
+	state.index = rec(state.tree);
+
+  return state.index;
+};
+
+
 // create new root node, if needed
 function autofresh(state) {
   if(!state.fresh)
@@ -24,51 +48,6 @@ function autofresh(state) {
   state.index = null;
 }
 
-// render the tree to a JSON datastructure
-function indexJSON(state, options) {
-  var o = options || {all: true};
-  var index = {}
-
-  if (o.all || o.filecount)
-    index.filecount = 0;
-
-  if (o.all || o.files)
-    index.files = [];
-
-  if (o.all || o.filelist)
-    index.filelist = [];
-
-  if (o.all || o.filenames)
-    index.filenames = {}
-
-  state.index = state.index || state.tree.compact_root().reduce(
-    function accumulateNode(index, node){
-
-      var frep = {
-        filename: node.label,
-        filepath: node.leaf && node.leaf.path
-      };
-
-      if (o.all || o.filecount)
-        index.filecount += 1;
-
-      if (o.all || o.files)
-        index.files.push(frep.filename);
-
-      if (o.all || o.filelist)
-        index.filelist.push(frep);
-
-      if (o.all || o.filenames)
-        index.filenames[frep.filename] = frep;
-
-      return index;
-
-    }, index);
-
-  return state.index;
-
-};
-
 // create a 'tree' out of vinyl VFS objects
 module.exports = function(options) {
 
@@ -78,6 +57,8 @@ module.exports = function(options) {
     fresh: true // true if a new tree needs to be created
   };
 
+  autofresh(state);
+
   // the server
   var app = mach.stack();
 
@@ -86,17 +67,24 @@ module.exports = function(options) {
 		options = { port: options };
 
 	// or passed full options object / didn't pass any
-	options =  options || {};
+	options =  options || {compactRoot: true};
+
+    options.index = options.index || 'index.html';
 
   //app.use(mach.gzip);
+//  app.use(mach.mapper);
+  app.use(mach.rewrite, '/', '/' + options.index);
   app.use(mach.params);
   app.use(mach.contentType, 'text/html');
 
   if (! options.quiet)
     app.use(mach.logger);
 
-  if (options.bower)
-    app.use(mach.file, {root: path.join(__dirname, 'bower_components')});
+  // serve static dirs
+  (options.static || []).forEach(function(dir){
+    console.log('serving static files from: ' + dir);
+    app.use(mach.file, {root: dir});
+  });
 
   // we serve the tree as an index.json file
   app.get('/index.json', function serveIndex(conn) {
@@ -106,15 +94,23 @@ module.exports = function(options) {
   // handle regular file gets, by looking them up in the tree
   app.get(/.*/, function serveTreenode(conn){
 
-    // remove trailing slash
+    // remove initial slash
     var stripped = conn.path.replace(/^\//, '');
 
-    var node = state.tree.find_child(stripped)
+    // TODO URL sanitization
+    var node = state.tree.find_path(stripped, '/');
 
     if(!node)
       return 404;
 
-    return node.leaf.contents;
+    // regular files
+    if(node.leaf && node.leaf.contents)
+      return node.leaf.contents;
+
+    // directory listing
+    return '<ul>' + node.nodes.map(function(n){
+		return '<li><a href="/' + n.path('/') + '">' + n.label + '</a></li>';
+	}) + '</ul>';
   });
 
   // start the server
@@ -141,7 +137,7 @@ module.exports = function(options) {
           vpath = path.relative(vfs.cwd, vfs.path);
         }
 
-        // update the tree
+        // update the tree (but skip the index)
         state.tree.push_path(vpath, vfs);
 
         // done handling the 'data' event, just pass file unchanged
@@ -152,12 +148,14 @@ module.exports = function(options) {
         // collapse singleton root node
         //var compact = state.tree.compact_root();
 
+        console.log(state.tree && state.tree.size())
+
         if(! options.quiet)
           console.log(archy(state.tree));
 
         // if root has only one node, make that the root
         // overriding our predefined root '.'
-        if(options.foldRoot)
+        if(options.compactRoot)
           state.tree = state.tree.compact_root();
 
         // mark end of path stream
