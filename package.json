@@ -1,13 +1,14 @@
 {
   "name": "gulp-fserver",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.1.0",
+  "description": "Serve file stream stream over HTTP",
   "main": "fserver.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "",
+  "author": "Jelle Herold <jelle@defekt.nl>",
   "license": "ISC",
+  "repository": {
+	  "type": "git",
+	  "url": "https://github.com/wires/fserve.git"
+  },
   "dependencies": {
     "archy": "^1.0.0",
     "mach": "^1.0.0-rc1",
